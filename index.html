@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>LinkX Smart Rover</title>
+<style>
+  :root{
+    --bg:#0d1117; --card:#161b22; --accent:#00c9a7; --accent2:#ff4d4d;
+    --text:#e6edf3; --muted:#8b949e; --border:#2d333b;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,'Segoe UI',Roboto,sans-serif;
+    padding:14px 14px 40px; user-select:none;
+  }
+  h1{font-size:1.25rem; margin:6px 0 2px;}
+  .sub{color:var(--muted); font-size:.8rem; margin-bottom:14px;}
+  .status-row{display:flex; align-items:center; gap:10px; margin-bottom:14px;}
+  .dot{width:12px;height:12px;border-radius:50%;background:var(--muted);transition:.3s;}
+  .dot.on{background:var(--accent); box-shadow:0 0 8px var(--accent);}
+  .dot.warn{background:#f5a623; box-shadow:0 0 8px #f5a623;}
+  .dot.danger{background:var(--accent2); box-shadow:0 0 8px var(--accent2); animation:pulse 0.6s infinite;}
+  @keyframes pulse{0%{opacity:1}50%{opacity:.4}100%{opacity:1}}
+  .card{
+    background:var(--card); border:1px solid var(--border); border-radius:14px;
+    padding:14px; margin-bottom:14px;
+  }
+  .card h2{font-size:.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 10px;}
+  .gauge-wrap{display:flex; align-items:center; justify-content:space-between;}
+  .gauge-val{font-size:2.2rem; font-weight:700;}
+  .gauge-unit{color:var(--muted); font-size:.9rem;}
+  .bar-track{height:10px; background:#21262d; border-radius:6px; overflow:hidden; margin-top:10px;}
+  .bar-fill{height:100%; background:linear-gradient(90deg,var(--accent),#3ddc97); width:0%; transition:width .2s;}
+  .pad{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; max-width:320px; margin:0 auto;}
+  .pad button{
+    padding:20px 0; font-size:1.4rem; border:none; border-radius:12px; color:#fff;
+    background:#21262d; border:1px solid var(--border); transition:.1s;
+  }
+  .pad button:active{transform:scale(.93); background:var(--accent); color:#04302a;}
+  .pad .stop{background:var(--accent2); grid-column:2;}
+  .pad .stop:active{background:#c62828;}
+  .row2{display:flex; gap:10px;}
+  .row2 button{
+    flex:1; padding:12px; border-radius:10px; border:1px solid var(--border);
+    background:#21262d; color:#fff; font-size:.95rem;
+  }
+  .row2 button.active{background:var(--accent); color:#04302a; border-color:var(--accent);}
+  input[type="range"]{width:100%; accent-color:var(--accent);}
+  .log{max-height:140px; overflow-y:auto; font-size:.78rem; color:var(--muted); font-family:monospace;}
+  .log div{padding:3px 0; border-bottom:1px dashed var(--border);}
+  .toast{
+    position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+    background:var(--accent2); color:#fff; padding:10px 18px; border-radius:10px;
+    font-size:.85rem; opacity:0; transition:.3s; pointer-events:none;
+  }
+  .toast.show{opacity:1;}
+  a.dl{color:var(--accent); font-size:.8rem; text-decoration:none;}
+</style>
+</head>
+<body>
+
+<h1>🤖 LinkX Smart Rover</h1>
+<div class="sub">Obstacle-Avoidance Dashboard · ESP32-S3</div>
+
+<div class="status-row">
+  <div id="wsDot" class="dot"></div><span id="wsText">Connecting…</span>
+</div>
+
+<div class="card">
+  <h2>Obstacle Distance</h2>
+  <div class="gauge-wrap">
+    <div><span id="distVal" class="gauge-val">--</span><span class="gauge-unit"> cm</span></div>
+    <div id="obsBadge" style="font-size:.8rem;color:var(--muted);">No obstacle</div>
+  </div>
+  <div class="bar-track"><div id="distBar" class="bar-fill"></div></div>
+</div>
+
+<div class="card">
+  <h2>Drive Control</h2>
+  <div class="pad">
+    <div></div>
+    <button ontouchstart="hold('forward')" ontouchend="hold('stop')" onmousedown="hold('forward')" onmouseup="hold('stop')">▲</button>
+    <div></div>
+    <button ontouchstart="hold('left')" ontouchend="hold('stop')" onmousedown="hold('left')" onmouseup="hold('stop')">◀</button>
+    <button class="stop" onclick="send('stop')">■</button>
+    <button ontouchstart="hold('right')" ontouchend="hold('stop')" onmousedown="hold('right')" onmouseup="hold('stop')">▶</button>
+    <div></div>
+    <button ontouchstart="hold('backward')" ontouchend="hold('stop')" onmousedown="hold('backward')" onmouseup="hold('stop')">▼</button>
+    <div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Safety Threshold: <span id="thVal">15</span> cm</h2>
+  <input type="range" min="5" max="60" value="15" id="thSlider" oninput="thPreview()" onchange="setThreshold()">
+</div>
+
+<div class="card">
+  <h2>Auto Mode</h2>
+  <div class="row2">
+    <button id="autoOffBtn" class="active" onclick="setAuto(false)">Manual</button>
+    <button id="autoOnBtn" onclick="setAuto(true)">Auto-Avoid</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Event Log <a class="dl" href="/log.csv" download>Download CSV</a></h2>
+  <div id="logBox" class="log"><div>Waiting for events…</div></div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+let ws;
+let holdTimer;
+function connect(){
+  ws = new WebSocket('ws://' + location.hostname + '/ws');
+  ws.onopen = () => { setDot('on','Connected'); };
+  ws.onclose = () => { setDot('','Disconnected — retrying'); setTimeout(connect, 1500); };
+  ws.onerror = () => { ws.close(); };
+  ws.onmessage = (e) => {
+    try{
+      const d = JSON.parse(e.data);
+      if(d.distance !== undefined){
+        document.getElementById('distVal').textContent = d.distance >= 400 ? '—' : d.distance;
+        let pct = Math.max(0, Math.min(100, (1 - d.distance/100) * 100));
+        document.getElementById('distBar').style.width = pct + '%';
+      }
+      if(d.obstacle !== undefined){
+        document.getElementById('obsBadge').textContent = d.obstacle ? '⚠ Obstacle!' : 'No obstacle';
+        setDot(d.obstacle ? 'danger' : 'on', d.obstacle ? 'Obstacle detected' : 'Connected');
+      }
+      if(d.event){ addLog(d.event); }
+      if(d.auto !== undefined){ syncAutoButtons(d.auto); }
+    }catch(err){}
+  };
+}
+function setDot(cls, text){
+  const dot = document.getElementById('wsDot');
+  dot.className = 'dot' + (cls ? ' '+cls : '');
+  document.getElementById('wsText').textContent = text;
+}
+function send(cmd, val){
+  if(ws && ws.readyState === 1) ws.send(JSON.stringify(val!==undefined?{cmd,value:val}:{cmd}));
+}
+function hold(cmd){ send(cmd); }
+function thPreview(){ document.getElementById('thVal').textContent = document.getElementById('thSlider').value; }
+function setThreshold(){ send('setThreshold', parseInt(document.getElementById('thSlider').value)); }
+function setAuto(state){ send('setAuto', state); syncAutoButtons(state); }
+function syncAutoButtons(state){
+  document.getElementById('autoOnBtn').classList.toggle('active', state);
+  document.getElementById('autoOffBtn').classList.toggle('active', !state);
+}
+function addLog(text){
+  const box = document.getElementById('logBox');
+  if(box.children[0] && box.children[0].textContent === 'Waiting for events…') box.innerHTML='';
+  const line = document.createElement('div');
+  line.textContent = text;
+  box.prepend(line);
+  while(box.children.length > 30) box.removeChild(box.lastChild);
+  showToast(text);
+}
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(window._tt);
+  window._tt = setTimeout(()=>t.classList.remove('show'), 2000);
+}
+connect();
+</script>
+</body>
+</html>
